@@ -17,6 +17,26 @@ import numpy as np
 from matplotlib.patches import Polygon
 
 
+DIAGONAL_ROTATION_DEGREES = -45
+DIAGONAL_LABEL_POSITION = (0.82, 0.81)
+DIAGONAL_PANEL_SHIFT = 3.9
+DIAGONAL_AXIS_START = np.array([0.02, 0.98])
+DIAGONAL_AXIS_END = np.array([0.98, 0.02])
+MARGINAL_SIZE_FRACTION = 0.5
+
+REFERENCE_LINE_STYLE = {
+    "color": "0.25",
+    "linestyle": "--",
+    "linewidth": 0.9,
+    "alpha": 0.45,
+}
+SCATTER_GRID_STYLE = {
+    "which": "both",
+    "color": "0.9",
+    "linewidth": 0.8,
+}
+
+
 def _reference_offsets(log_x: np.ndarray, log_y: np.ndarray) -> list[float]:
     """Choose one-decade reference offsets that cover the data."""
     offsets = log_y - log_x
@@ -48,12 +68,14 @@ def _shared_log_limits(log_x: np.ndarray, log_y: np.ndarray) -> tuple[float, flo
 def _reference_label(offset: float) -> str:
     if offset == 0:
         return "y = x"
-    if offset > 0:
-        multiplier = f"{10**offset:g}"
-        return f"y = {multiplier}x"
 
     multiplier = f"{10**offset:g}"
     return f"y = {multiplier}x"
+
+
+def _hide_spines(ax: plt.Axes, spines: tuple[str, ...]) -> None:
+    for spine in spines:
+        ax.spines[spine].set_visible(False)
 
 
 def _plot_scatter_reference_lines(
@@ -74,10 +96,7 @@ def _plot_scatter_reference_lines(
         ax.plot(
             [start, end],
             [start * multiplier, end * multiplier],
-            color="0.25",
-            linestyle="--",
-            linewidth=0.9,
-            alpha=0.45,
+            **REFERENCE_LINE_STYLE,
             zorder=0,
         )
 
@@ -113,8 +132,8 @@ def _plot_diagonal_histogram(
 
     diagonal = np.array([1 / math.sqrt(2), -1 / math.sqrt(2)])
     normal = np.array([1 / math.sqrt(2), 1 / math.sqrt(2)])
-    start = np.array([0.02, 0.98])
-    end = np.array([0.98, 0.02])
+    start = DIAGONAL_AXIS_START
+    end = DIAGONAL_AXIS_END
     span = end - start
     bar_width = 0.95 / bins
 
@@ -127,10 +146,7 @@ def _plot_diagonal_histogram(
         ax.plot(
             [point[0] - normal[0] * 0.08, point[0] + normal[0] * 0.38],
             [point[1] - normal[1] * 0.08, point[1] + normal[1] * 0.38],
-            color="0.25",
-            linestyle="--",
-            linewidth=0.9,
-            alpha=0.45,
+            **REFERENCE_LINE_STYLE,
             clip_on=True,
         )
         tick_start = point - normal * 0.025
@@ -148,7 +164,7 @@ def _plot_diagonal_histogram(
             _reference_label(offset),
             ha="right",
             va="center",
-            rotation=-45,
+            rotation=DIAGONAL_ROTATION_DEGREES,
             fontsize=8,
         )
 
@@ -174,13 +190,13 @@ def _plot_diagonal_histogram(
 
     ax.plot([start[0], end[0]], [start[1], end[1]], color="0.35", linewidth=1.0)
     ax.text(
-        0.82,
-        0.81,
+        DIAGONAL_LABEL_POSITION[0],
+        DIAGONAL_LABEL_POSITION[1],
         "log10(x/y)",
         transform=ax.transAxes,
         ha="center",
         va="center",
-        rotation=-45,
+        rotation=DIAGONAL_ROTATION_DEGREES,
         fontsize=10,
     )
 
@@ -200,14 +216,14 @@ def _align_marginal_axes(
             scatter_position.x0,
             top_cell.y0,
             scatter_position.width,
-            top_cell.height * 0.5,
+            top_cell.height * MARGINAL_SIZE_FRACTION,
         ]
     )
     ax_hist_y.set_position(
         [
             right_cell.x0,
             scatter_position.y0,
-            right_cell.width * 0.5,
+            right_cell.width * MARGINAL_SIZE_FRACTION,
             scatter_position.height,
         ]
     )
@@ -217,7 +233,7 @@ def _shift_diagonal_axis_toward_scatter(
     ax_scatter: plt.Axes,
     ax_ratio: plt.Axes,
     *,
-    gap_fraction: float = 3.9,
+    gap_fraction: float = DIAGONAL_PANEL_SHIFT,
 ) -> None:
     """Move the diagonal plot closer without changing its size."""
     scatter_position = ax_scatter.get_position()
@@ -233,6 +249,34 @@ def _shift_diagonal_axis_toward_scatter(
             ratio_position.height,
         ]
     )
+
+
+def _style_scatter_axis(ax: plt.Axes, axis_min: float, axis_max: float) -> None:
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlim(axis_min, axis_max)
+    ax.set_ylim(axis_min, axis_max)
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.grid(True, **SCATTER_GRID_STYLE)
+
+
+def _style_top_marginal_axis(ax: plt.Axes, axis_min: float, axis_max: float) -> None:
+    ax.set_xscale("log")
+    ax.set_xlim(axis_min, axis_max)
+    ax.set_ylabel("")
+    ax.tick_params(axis="x", labelbottom=False)
+    ax.tick_params(axis="y", left=False, labelleft=False)
+    _hide_spines(ax, ("left", "right", "top"))
+
+
+def _style_right_marginal_axis(ax: plt.Axes, axis_min: float, axis_max: float) -> None:
+    ax.set_yscale("log")
+    ax.set_ylim(axis_min, axis_max)
+    ax.set_xlabel("")
+    ax.tick_params(axis="x", bottom=False, labelbottom=False)
+    ax.tick_params(axis="y", labelleft=False)
+    _hide_spines(ax, ("bottom", "right", "top"))
 
 
 def plot_log_scatter_with_distributions(
@@ -275,36 +319,16 @@ def plot_log_scatter_with_distributions(
     ax_ratio.set_box_aspect(1)
 
     ax_scatter.scatter(x, y, s=16, alpha=0.55, edgecolors="none")
-    ax_scatter.set_xscale("log")
-    ax_scatter.set_yscale("log")
-    ax_scatter.set_xlim(axis_min, axis_max)
-    ax_scatter.set_ylim(axis_min, axis_max)
-    ax_scatter.set_xlabel("x")
-    ax_scatter.set_ylabel("y")
-    ax_scatter.grid(True, which="both", color="0.9", linewidth=0.8)
+    _style_scatter_axis(ax_scatter, axis_min, axis_max)
     _plot_scatter_reference_lines(ax_scatter, reference_offsets)
 
     shared_bins = np.geomspace(axis_min, axis_max, bins + 1)
 
     ax_hist_x.hist(x, bins=shared_bins, color="tab:blue", alpha=0.75)
-    ax_hist_x.set_xscale("log")
-    ax_hist_x.set_xlim(axis_min, axis_max)
-    ax_hist_x.set_ylabel("")
-    ax_hist_x.tick_params(axis="x", labelbottom=False)
-    ax_hist_x.tick_params(axis="y", left=False, labelleft=False)
-    ax_hist_x.spines["left"].set_visible(False)
-    ax_hist_x.spines["right"].set_visible(False)
-    ax_hist_x.spines["top"].set_visible(False)
+    _style_top_marginal_axis(ax_hist_x, axis_min, axis_max)
 
     ax_hist_y.hist(y, bins=shared_bins, orientation="horizontal", color="tab:orange", alpha=0.75)
-    ax_hist_y.set_yscale("log")
-    ax_hist_y.set_ylim(axis_min, axis_max)
-    ax_hist_y.set_xlabel("")
-    ax_hist_y.tick_params(axis="x", bottom=False, labelbottom=False)
-    ax_hist_y.tick_params(axis="y", labelleft=False)
-    ax_hist_y.spines["bottom"].set_visible(False)
-    ax_hist_y.spines["right"].set_visible(False)
-    ax_hist_y.spines["top"].set_visible(False)
+    _style_right_marginal_axis(ax_hist_y, axis_min, axis_max)
 
     _plot_diagonal_histogram(
         ax_ratio,
