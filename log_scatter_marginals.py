@@ -173,11 +173,11 @@ def _plot_diagonal_histogram(
         ax.add_patch(polygon)
 
     ax.plot([start[0], end[0]], [start[1], end[1]], color="0.35", linewidth=1.0)
-    axis_label_point = (start + end) / 2 - normal * 0.17
     ax.text(
-        axis_label_point[0],
-        axis_label_point[1],
-        "log10(x / y)",
+        0.82,
+        0.81,
+        "log10(x/y)",
+        transform=ax.transAxes,
         ha="center",
         va="center",
         rotation=-45,
@@ -217,7 +217,7 @@ def _shift_diagonal_axis_toward_scatter(
     ax_scatter: plt.Axes,
     ax_ratio: plt.Axes,
     *,
-    gap_fraction: float = 1.9,
+    gap_fraction: float = 3.9,
 ) -> None:
     """Move the diagonal plot closer without changing its size."""
     scatter_position = ax_scatter.get_position()
@@ -289,16 +289,22 @@ def plot_log_scatter_with_distributions(
     ax_hist_x.hist(x, bins=shared_bins, color="tab:blue", alpha=0.75)
     ax_hist_x.set_xscale("log")
     ax_hist_x.set_xlim(axis_min, axis_max)
-    ax_hist_x.set_ylabel("count")
+    ax_hist_x.set_ylabel("")
     ax_hist_x.tick_params(axis="x", labelbottom=False)
-    ax_hist_x.grid(True, axis="x", which="both", color="0.9", linewidth=0.8)
+    ax_hist_x.tick_params(axis="y", left=False, labelleft=False)
+    ax_hist_x.spines["left"].set_visible(False)
+    ax_hist_x.spines["right"].set_visible(False)
+    ax_hist_x.spines["top"].set_visible(False)
 
     ax_hist_y.hist(y, bins=shared_bins, orientation="horizontal", color="tab:orange", alpha=0.75)
     ax_hist_y.set_yscale("log")
     ax_hist_y.set_ylim(axis_min, axis_max)
-    ax_hist_y.set_xlabel("count")
+    ax_hist_y.set_xlabel("")
+    ax_hist_y.tick_params(axis="x", bottom=False, labelbottom=False)
     ax_hist_y.tick_params(axis="y", labelleft=False)
-    ax_hist_y.grid(True, axis="y", which="both", color="0.9", linewidth=0.8)
+    ax_hist_y.spines["bottom"].set_visible(False)
+    ax_hist_y.spines["right"].set_visible(False)
+    ax_hist_y.spines["top"].set_visible(False)
 
     _plot_diagonal_histogram(
         ax_ratio,
