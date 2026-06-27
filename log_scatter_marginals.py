@@ -18,7 +18,9 @@ import numpy as np
 from matplotlib.patches import Polygon
 
 # --- Figure layout -----------------------------------------------------------
+FIGURE_TITLE = "Log-Scale Scatter Plot with Marginal Distributions"
 FIGURE_SIZE = (10, 10)
+FIGURE_DPI = 180
 GRID_SPACING = 0.08
 MARGINAL_SIZE_FRACTION = 0.5
 DIAGONAL_PANEL_SHIFT = 3.9
@@ -298,7 +300,17 @@ def _shift_diagonal_axis_toward_scatter(
     )
 
 
-def _style_scatter_axis(ax: plt.Axes, axis_min: float, axis_max: float) -> None:
+def _plot_scatter_panel(
+    ax: plt.Axes,
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    axis_min: float,
+    axis_max: float,
+    reference_offsets: list[float],
+) -> None:
+    """Draw the central log-log scatter with its constant-ratio guide lines."""
+    ax.scatter(x, y, **SCATTER_MARKER_STYLE)
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlim(axis_min, axis_max)
@@ -306,49 +318,33 @@ def _style_scatter_axis(ax: plt.Axes, axis_min: float, axis_max: float) -> None:
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     ax.grid(True, **SCATTER_GRID_STYLE)
+    _plot_scatter_reference_lines(ax, reference_offsets)
 
 
-def _style_top_marginal_axis(ax: plt.Axes, axis_min: float, axis_max: float) -> None:
+def _plot_top_marginal(ax: plt.Axes, data: np.ndarray, bins: np.ndarray) -> None:
+    """Draw the x distribution above the scatter, sharing its x-axis."""
+    ax.hist(data, bins=bins, color=HIST_X_COLOR, alpha=HIST_ALPHA)
     ax.set_xscale("log")
-    ax.set_xlim(axis_min, axis_max)
+    ax.set_xlim(bins[0], bins[-1])
     ax.set_ylabel("")
     ax.tick_params(axis="x", labelbottom=False)
     ax.tick_params(axis="y", left=False, labelleft=False)
     _hide_spines(ax, ("left", "right", "top"))
 
 
-def _style_right_marginal_axis(ax: plt.Axes, axis_min: float, axis_max: float) -> None:
+def _plot_right_marginal(ax: plt.Axes, data: np.ndarray, bins: np.ndarray) -> None:
+    """Draw the y distribution to the right of the scatter, sharing its y-axis."""
+    ax.hist(data, bins=bins, orientation="horizontal", color=HIST_Y_COLOR, alpha=HIST_ALPHA)
     ax.set_yscale("log")
-    ax.set_ylim(axis_min, axis_max)
+    ax.set_ylim(bins[0], bins[-1])
     ax.set_xlabel("")
     ax.tick_params(axis="x", bottom=False, labelbottom=False)
     ax.tick_params(axis="y", labelleft=False)
     _hide_spines(ax, ("bottom", "right", "top"))
 
 
-def plot_log_scatter_with_distributions(
-    x: np.ndarray,
-    y: np.ndarray,
-    *,
-    bins: int = 40,
-    output_path: str | Path | None = "log_scatter_marginals.png",
-) -> tuple[plt.Figure, dict[str, plt.Axes]]:
-    """Plot a log-log scatter chart with marginal and ratio distributions."""
-    x = np.asarray(x, dtype=float)
-    y = np.asarray(y, dtype=float)
-
-    if x.shape != y.shape:
-        raise ValueError("x and y must have the same shape")
-    if np.any(x <= 0) or np.any(y <= 0):
-        raise ValueError("x and y must contain only positive values for log scales")
-
-    log_x = np.log10(x)
-    log_y = np.log10(y)
-    reference_offsets = _reference_offsets(log_x, log_y)
-    axis_min, axis_max = _shared_log_limits(log_x, log_y)
-    shared_bins = np.geomspace(axis_min, axis_max, bins + 1)
-
-    fig = plt.figure(figsize=FIGURE_SIZE)
+def _create_panel_axes(fig: plt.Figure) -> tuple[plt.Axes, plt.Axes, plt.Axes, plt.Axes]:
+    """Create the 2x2 panel grid and return (scatter, top, right, diagonal) axes."""
     grid = fig.add_gridspec(
         2,
         2,
@@ -366,16 +362,63 @@ def plot_log_scatter_with_distributions(
     ax_scatter.set_box_aspect(1)
     ax_ratio.set_box_aspect(1)
 
-    ax_scatter.scatter(x, y, **SCATTER_MARKER_STYLE)
-    _style_scatter_axis(ax_scatter, axis_min, axis_max)
-    _plot_scatter_reference_lines(ax_scatter, reference_offsets)
+    return ax_scatter, ax_hist_x, ax_hist_y, ax_ratio
 
-    ax_hist_x.hist(x, bins=shared_bins, color=HIST_X_COLOR, alpha=HIST_ALPHA)
-    _style_top_marginal_axis(ax_hist_x, axis_min, axis_max)
 
-    ax_hist_y.hist(y, bins=shared_bins, orientation="horizontal", color=HIST_Y_COLOR, alpha=HIST_ALPHA)
-    _style_right_marginal_axis(ax_hist_y, axis_min, axis_max)
+def _finalize_layout(
+    fig: plt.Figure,
+    ax_scatter: plt.Axes,
+    ax_hist_x: plt.Axes,
+    ax_hist_y: plt.Axes,
+    ax_ratio: plt.Axes,
+) -> None:
+    """Apply manual axis placement that depends on resolved subplot positions."""
+    fig.suptitle(FIGURE_TITLE, fontsize=14)
+    # The manual repositioning below reads each axis position, so the layout
+    # engine must resolve them first.
+    fig.canvas.draw()
+    _align_marginal_axes(ax_scatter, ax_hist_x, ax_hist_y)
+    _shift_diagonal_axis_toward_scatter(ax_scatter, ax_ratio)
 
+
+def _validate_inputs(x: np.ndarray, y: np.ndarray) -> None:
+    if x.shape != y.shape:
+        raise ValueError("x and y must have the same shape")
+    if np.any(x <= 0) or np.any(y <= 0):
+        raise ValueError("x and y must contain only positive values for log scales")
+
+
+def plot_log_scatter_with_distributions(
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    bins: int = 40,
+    output_path: str | Path | None = "log_scatter_marginals.png",
+) -> tuple[plt.Figure, dict[str, plt.Axes]]:
+    """Plot a log-log scatter chart with marginal and ratio distributions."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    _validate_inputs(x, y)
+
+    log_x = np.log10(x)
+    log_y = np.log10(y)
+    reference_offsets = _reference_offsets(log_x, log_y)
+    axis_min, axis_max = _shared_log_limits(log_x, log_y)
+    shared_bins = np.geomspace(axis_min, axis_max, bins + 1)
+
+    fig = plt.figure(figsize=FIGURE_SIZE)
+    ax_scatter, ax_hist_x, ax_hist_y, ax_ratio = _create_panel_axes(fig)
+
+    _plot_scatter_panel(
+        ax_scatter,
+        x,
+        y,
+        axis_min=axis_min,
+        axis_max=axis_max,
+        reference_offsets=reference_offsets,
+    )
+    _plot_top_marginal(ax_hist_x, x, shared_bins)
+    _plot_right_marginal(ax_hist_y, y, shared_bins)
     _plot_diagonal_histogram(
         ax_ratio,
         np.log10(x / y),
@@ -386,13 +429,10 @@ def plot_log_scatter_with_distributions(
         log_axis_max=np.log10(axis_max),
     )
 
-    fig.suptitle("Log-Scale Scatter Plot with Marginal Distributions", fontsize=14)
-    fig.canvas.draw()
-    _align_marginal_axes(ax_scatter, ax_hist_x, ax_hist_y)
-    _shift_diagonal_axis_toward_scatter(ax_scatter, ax_ratio)
+    _finalize_layout(fig, ax_scatter, ax_hist_x, ax_hist_y, ax_ratio)
 
     if output_path is not None:
-        fig.savefig(output_path, dpi=180)
+        fig.savefig(output_path, dpi=FIGURE_DPI)
 
     return fig, {
         "scatter": ax_scatter,
