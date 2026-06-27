@@ -173,9 +173,10 @@ def _plot_diagonal_histogram(
         ax.add_patch(polygon)
 
     ax.plot([start[0], end[0]], [start[1], end[1]], color="0.35", linewidth=1.0)
+    axis_label_point = (start + end) / 2 - normal * 0.17
     ax.text(
-        0.48,
-        0.02,
+        axis_label_point[0],
+        axis_label_point[1],
         "log10(x / y)",
         ha="center",
         va="center",
@@ -208,6 +209,28 @@ def _align_marginal_axes(
             scatter_position.y0,
             right_cell.width * 0.5,
             scatter_position.height,
+        ]
+    )
+
+
+def _shift_diagonal_axis_toward_scatter(
+    ax_scatter: plt.Axes,
+    ax_ratio: plt.Axes,
+    *,
+    gap_fraction: float = 1.9,
+) -> None:
+    """Move the diagonal plot closer without changing its size."""
+    scatter_position = ax_scatter.get_position()
+    ratio_position = ax_ratio.get_position()
+    horizontal_gap = max(ratio_position.x0 - scatter_position.x1, 0)
+    vertical_gap = max(ratio_position.y0 - scatter_position.y1, 0)
+
+    ax_ratio.set_position(
+        [
+            ratio_position.x0 - horizontal_gap * gap_fraction,
+            ratio_position.y0 - vertical_gap * gap_fraction,
+            ratio_position.width,
+            ratio_position.height,
         ]
     )
 
@@ -290,6 +313,7 @@ def plot_log_scatter_with_distributions(
     fig.suptitle("Log-Scale Scatter Plot with Marginal Distributions", fontsize=14)
     fig.canvas.draw()
     _align_marginal_axes(ax_scatter, ax_hist_x, ax_hist_y)
+    _shift_diagonal_axis_toward_scatter(ax_scatter, ax_ratio)
 
     if output_path is not None:
         fig.savefig(output_path, dpi=180)
