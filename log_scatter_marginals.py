@@ -28,20 +28,22 @@ DIAGONAL_PANEL_SHIFT = 3.9
 # --- Data colors / markers ---------------------------------------------------
 SCATTER_MARKER_STYLE = {"s": 16, "alpha": 0.55, "edgecolors": "none"}
 HIST_ALPHA = 0.75
-HIST_X_COLOR = "tab:blue"
-HIST_Y_COLOR = "tab:orange"
-DIAGONAL_HIST_COLOR = "tab:green"
+DEFAULT_SCATTER_COLOR = "tab:blue"
+DEFAULT_HIST_X_COLOR = "tab:blue"
+DEFAULT_HIST_Y_COLOR = "tab:orange"
+DEFAULT_DIAGONAL_HIST_COLOR = "tab:green"
+DEFAULT_REFERENCE_COLOR = "0.25"
+DEFAULT_DIAGONAL_AXIS_COLOR = "0.35"
+DEFAULT_GRID_COLOR = "0.9"
 
 # --- Shared line styles ------------------------------------------------------
 REFERENCE_LINE_STYLE = {
-    "color": "0.25",
     "linestyle": "--",
     "linewidth": 0.9,
     "alpha": 0.45,
 }
 SCATTER_GRID_STYLE = {
     "which": "both",
-    "color": "0.9",
     "linewidth": 0.8,
 }
 
@@ -56,8 +58,8 @@ DIAGONAL_NORMAL = np.array([1.0, 1.0]) / math.sqrt(2)
 
 DIAGONAL_ROTATION_DEGREES = -45
 DIAGONAL_LABEL_POSITION = (0.82, 0.81)
-DIAGONAL_AXIS_LINE_STYLE = {"color": "0.35", "linewidth": 1.0}
-DIAGONAL_TICK_STYLE = {"color": "0.25", "linewidth": 0.8}
+DIAGONAL_AXIS_LINE_STYLE = {"linewidth": 1.0}
+DIAGONAL_TICK_STYLE = {"linewidth": 0.8}
 
 # Offsets are expressed in axes-fraction units along DIAGONAL_NORMAL.
 REFERENCE_LINE_BACK = 0.08
@@ -117,7 +119,56 @@ class _DiagonalProjection:
         return DIAGONAL_AXIS_START + fraction * (DIAGONAL_AXIS_END - DIAGONAL_AXIS_START)
 
 
-def _plot_scatter_reference_lines(ax: plt.Axes, reference_offsets: list[float]) -> None:
+@dataclass(frozen=True)
+class _PreparedData:
+    """Input arrays plus the derived quantities shared by multiple panels."""
+
+    x: np.ndarray
+    y: np.ndarray
+    ratio: np.ndarray
+    shared_bins: np.ndarray
+    axis_min: float
+    axis_max: float
+    reference_offsets: list[float]
+
+
+@dataclass(frozen=True)
+class _PlotColors:
+    """Configurable colors used by the plot panels."""
+
+    scatter: str
+    hist_x: str
+    hist_y: str
+    diagonal_hist: str
+    reference: str
+    diagonal_axis: str
+    grid: str
+
+
+@dataclass(frozen=True)
+class _PanelAxes:
+    """Named handles for the four axes in the figure."""
+
+    scatter: plt.Axes
+    hist_x: plt.Axes
+    hist_y: plt.Axes
+    ratio: plt.Axes
+
+    def as_dict(self) -> dict[str, plt.Axes]:
+        return {
+            "scatter": self.scatter,
+            "hist_x": self.hist_x,
+            "hist_y": self.hist_y,
+            "ratio": self.ratio,
+        }
+
+
+def _plot_scatter_reference_lines(
+    ax: plt.Axes,
+    reference_offsets: list[float],
+    *,
+    color: str,
+) -> None:
     """Draw constant-ratio (y = c * x) guide lines on the scatter panel."""
     x_min, x_max = ax.get_xlim()
     y_min, y_max = ax.get_ylim()
@@ -134,6 +185,7 @@ def _plot_scatter_reference_lines(ax: plt.Axes, reference_offsets: list[float]) 
             [start, end],
             [start * multiplier, end * multiplier],
             **REFERENCE_LINE_STYLE,
+            color=color,
             zorder=0,
         )
 
@@ -145,17 +197,30 @@ def _draw_diagonal_reference_lines(
     ax: plt.Axes,
     projection: _DiagonalProjection,
     reference_offsets: list[float],
+    *,
+    color: str,
 ) -> None:
     """Draw the dashed guide lines, ticks, and y = c * x labels for each offset."""
     for offset in reference_offsets:
         point = projection.point(-offset)
         back = point - DIAGONAL_NORMAL * REFERENCE_LINE_BACK
         forward = point + DIAGONAL_NORMAL * REFERENCE_LINE_FORWARD
-        ax.plot([back[0], forward[0]], [back[1], forward[1]], **REFERENCE_LINE_STYLE, clip_on=True)
+        ax.plot(
+            [back[0], forward[0]],
+            [back[1], forward[1]],
+            **REFERENCE_LINE_STYLE,
+            color=color,
+            clip_on=True,
+        )
 
         tick_start = point - DIAGONAL_NORMAL * TICK_HALF_LENGTH
         tick_end = point + DIAGONAL_NORMAL * TICK_HALF_LENGTH
-        ax.plot([tick_start[0], tick_end[0]], [tick_start[1], tick_end[1]], **DIAGONAL_TICK_STYLE)
+        ax.plot(
+            [tick_start[0], tick_end[0]],
+            [tick_start[1], tick_end[1]],
+            **DIAGONAL_TICK_STYLE,
+            color=color,
+        )
 
         label_point = point - DIAGONAL_NORMAL * LABEL_OFFSET
         ax.text(
@@ -204,12 +269,13 @@ def _draw_diagonal_bars(
         )
 
 
-def _draw_diagonal_axis_and_label(ax: plt.Axes) -> None:
+def _draw_diagonal_axis_and_label(ax: plt.Axes, *, color: str) -> None:
     """Draw the diagonal axis line and its rotated log10(x/y) title."""
     ax.plot(
         [DIAGONAL_AXIS_START[0], DIAGONAL_AXIS_END[0]],
         [DIAGONAL_AXIS_START[1], DIAGONAL_AXIS_END[1]],
         **DIAGONAL_AXIS_LINE_STYLE,
+        color=color,
     )
     ax.text(
         *DIAGONAL_LABEL_POSITION,
@@ -227,7 +293,7 @@ def _plot_diagonal_histogram(
     values: np.ndarray,
     *,
     bins: int,
-    color: str,
+    colors: _PlotColors,
     reference_offsets: list[float],
     log_axis_min: float,
     log_axis_max: float,
@@ -245,9 +311,9 @@ def _plot_diagonal_histogram(
     if counts.max(initial=0) == 0:
         return
 
-    _draw_diagonal_reference_lines(ax, projection, reference_offsets)
-    _draw_diagonal_bars(ax, projection, counts, edges, color)
-    _draw_diagonal_axis_and_label(ax)
+    _draw_diagonal_reference_lines(ax, projection, reference_offsets, color=colors.reference)
+    _draw_diagonal_bars(ax, projection, counts, edges, colors.diagonal_hist)
+    _draw_diagonal_axis_and_label(ax, color=colors.diagonal_axis)
 
 
 def _align_marginal_axes(
@@ -308,22 +374,29 @@ def _plot_scatter_panel(
     axis_min: float,
     axis_max: float,
     reference_offsets: list[float],
+    colors: _PlotColors,
 ) -> None:
     """Draw the central log-log scatter with its constant-ratio guide lines."""
-    ax.scatter(x, y, **SCATTER_MARKER_STYLE)
+    ax.scatter(x, y, **SCATTER_MARKER_STYLE, color=colors.scatter)
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlim(axis_min, axis_max)
     ax.set_ylim(axis_min, axis_max)
     ax.set_xlabel("x")
     ax.set_ylabel("y")
-    ax.grid(True, **SCATTER_GRID_STYLE)
-    _plot_scatter_reference_lines(ax, reference_offsets)
+    ax.grid(True, **SCATTER_GRID_STYLE, color=colors.grid)
+    _plot_scatter_reference_lines(ax, reference_offsets, color=colors.reference)
 
 
-def _plot_top_marginal(ax: plt.Axes, data: np.ndarray, bins: np.ndarray) -> None:
+def _plot_top_marginal(
+    ax: plt.Axes,
+    data: np.ndarray,
+    bins: np.ndarray,
+    *,
+    colors: _PlotColors,
+) -> None:
     """Draw the x distribution above the scatter, sharing its x-axis."""
-    ax.hist(data, bins=bins, color=HIST_X_COLOR, alpha=HIST_ALPHA)
+    ax.hist(data, bins=bins, color=colors.hist_x, alpha=HIST_ALPHA)
     ax.set_xscale("log")
     ax.set_xlim(bins[0], bins[-1])
     ax.set_ylabel("")
@@ -332,9 +405,15 @@ def _plot_top_marginal(ax: plt.Axes, data: np.ndarray, bins: np.ndarray) -> None
     _hide_spines(ax, ("left", "right", "top"))
 
 
-def _plot_right_marginal(ax: plt.Axes, data: np.ndarray, bins: np.ndarray) -> None:
+def _plot_right_marginal(
+    ax: plt.Axes,
+    data: np.ndarray,
+    bins: np.ndarray,
+    *,
+    colors: _PlotColors,
+) -> None:
     """Draw the y distribution to the right of the scatter, sharing its y-axis."""
-    ax.hist(data, bins=bins, orientation="horizontal", color=HIST_Y_COLOR, alpha=HIST_ALPHA)
+    ax.hist(data, bins=bins, orientation="horizontal", color=colors.hist_y, alpha=HIST_ALPHA)
     ax.set_yscale("log")
     ax.set_ylim(bins[0], bins[-1])
     ax.set_xlabel("")
@@ -343,8 +422,8 @@ def _plot_right_marginal(ax: plt.Axes, data: np.ndarray, bins: np.ndarray) -> No
     _hide_spines(ax, ("bottom", "right", "top"))
 
 
-def _create_panel_axes(fig: plt.Figure) -> tuple[plt.Axes, plt.Axes, plt.Axes, plt.Axes]:
-    """Create the 2x2 panel grid and return (scatter, top, right, diagonal) axes."""
+def _create_panel_axes(fig: plt.Figure) -> _PanelAxes:
+    """Create the 2x2 panel grid."""
     grid = fig.add_gridspec(
         2,
         2,
@@ -362,23 +441,25 @@ def _create_panel_axes(fig: plt.Figure) -> tuple[plt.Axes, plt.Axes, plt.Axes, p
     ax_scatter.set_box_aspect(1)
     ax_ratio.set_box_aspect(1)
 
-    return ax_scatter, ax_hist_x, ax_hist_y, ax_ratio
+    return _PanelAxes(
+        scatter=ax_scatter,
+        hist_x=ax_hist_x,
+        hist_y=ax_hist_y,
+        ratio=ax_ratio,
+    )
 
 
 def _finalize_layout(
     fig: plt.Figure,
-    ax_scatter: plt.Axes,
-    ax_hist_x: plt.Axes,
-    ax_hist_y: plt.Axes,
-    ax_ratio: plt.Axes,
+    axes: _PanelAxes,
 ) -> None:
     """Apply manual axis placement that depends on resolved subplot positions."""
     fig.suptitle(FIGURE_TITLE, fontsize=14)
     # The manual repositioning below reads each axis position, so the layout
     # engine must resolve them first.
     fig.canvas.draw()
-    _align_marginal_axes(ax_scatter, ax_hist_x, ax_hist_y)
-    _shift_diagonal_axis_toward_scatter(ax_scatter, ax_ratio)
+    _align_marginal_axes(axes.scatter, axes.hist_x, axes.hist_y)
+    _shift_diagonal_axis_toward_scatter(axes.scatter, axes.ratio)
 
 
 def _validate_inputs(x: np.ndarray, y: np.ndarray) -> None:
@@ -388,58 +469,82 @@ def _validate_inputs(x: np.ndarray, y: np.ndarray) -> None:
         raise ValueError("x and y must contain only positive values for log scales")
 
 
-def plot_log_scatter_with_distributions(
-    x: np.ndarray,
-    y: np.ndarray,
-    *,
-    bins: int = 40,
-    output_path: str | Path | None = "log_scatter_marginals.png",
-) -> tuple[plt.Figure, dict[str, plt.Axes]]:
-    """Plot a log-log scatter chart with marginal and ratio distributions."""
+def _prepare_data(x: np.ndarray, y: np.ndarray, bins: int) -> _PreparedData:
+    """Normalize inputs and compute values shared across panels."""
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     _validate_inputs(x, y)
 
     log_x = np.log10(x)
     log_y = np.log10(y)
-    reference_offsets = _reference_offsets(log_x, log_y)
     axis_min, axis_max = _shared_log_limits(log_x, log_y)
-    shared_bins = np.geomspace(axis_min, axis_max, bins + 1)
 
-    fig = plt.figure(figsize=FIGURE_SIZE)
-    ax_scatter, ax_hist_x, ax_hist_y, ax_ratio = _create_panel_axes(fig)
-
-    _plot_scatter_panel(
-        ax_scatter,
-        x,
-        y,
+    return _PreparedData(
+        x=x,
+        y=y,
+        ratio=np.log10(x / y),
+        shared_bins=np.geomspace(axis_min, axis_max, bins + 1),
         axis_min=axis_min,
         axis_max=axis_max,
-        reference_offsets=reference_offsets,
-    )
-    _plot_top_marginal(ax_hist_x, x, shared_bins)
-    _plot_right_marginal(ax_hist_y, y, shared_bins)
-    _plot_diagonal_histogram(
-        ax_ratio,
-        np.log10(x / y),
-        bins=bins,
-        color=DIAGONAL_HIST_COLOR,
-        reference_offsets=reference_offsets,
-        log_axis_min=np.log10(axis_min),
-        log_axis_max=np.log10(axis_max),
+        reference_offsets=_reference_offsets(log_x, log_y),
     )
 
-    _finalize_layout(fig, ax_scatter, ax_hist_x, ax_hist_y, ax_ratio)
+
+def plot_log_scatter_with_distributions(
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    bins: int = 40,
+    output_path: str | Path | None = "log_scatter_marginals.png",
+    scatter_color: str = DEFAULT_SCATTER_COLOR,
+    hist_x_color: str = DEFAULT_HIST_X_COLOR,
+    hist_y_color: str = DEFAULT_HIST_Y_COLOR,
+    diagonal_hist_color: str = DEFAULT_DIAGONAL_HIST_COLOR,
+    reference_color: str = DEFAULT_REFERENCE_COLOR,
+    diagonal_axis_color: str = DEFAULT_DIAGONAL_AXIS_COLOR,
+    grid_color: str = DEFAULT_GRID_COLOR,
+) -> tuple[plt.Figure, dict[str, plt.Axes]]:
+    """Plot a log-log scatter chart with marginal and ratio distributions."""
+    data = _prepare_data(x, y, bins)
+    colors = _PlotColors(
+        scatter=scatter_color,
+        hist_x=hist_x_color,
+        hist_y=hist_y_color,
+        diagonal_hist=diagonal_hist_color,
+        reference=reference_color,
+        diagonal_axis=diagonal_axis_color,
+        grid=grid_color,
+    )
+    fig = plt.figure(figsize=FIGURE_SIZE)
+    axes = _create_panel_axes(fig)
+
+    _plot_scatter_panel(
+        axes.scatter,
+        data.x,
+        data.y,
+        axis_min=data.axis_min,
+        axis_max=data.axis_max,
+        reference_offsets=data.reference_offsets,
+        colors=colors,
+    )
+    _plot_top_marginal(axes.hist_x, data.x, data.shared_bins, colors=colors)
+    _plot_right_marginal(axes.hist_y, data.y, data.shared_bins, colors=colors)
+    _plot_diagonal_histogram(
+        axes.ratio,
+        data.ratio,
+        bins=bins,
+        colors=colors,
+        reference_offsets=data.reference_offsets,
+        log_axis_min=np.log10(data.axis_min),
+        log_axis_max=np.log10(data.axis_max),
+    )
+
+    _finalize_layout(fig, axes)
 
     if output_path is not None:
         fig.savefig(output_path, dpi=FIGURE_DPI)
 
-    return fig, {
-        "scatter": ax_scatter,
-        "hist_x": ax_hist_x,
-        "hist_y": ax_hist_y,
-        "ratio": ax_ratio,
-    }
+    return fig, axes.as_dict()
 
 
 if __name__ == "__main__":
