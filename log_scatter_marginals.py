@@ -10,20 +10,27 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Polygon
 
-
-DIAGONAL_ROTATION_DEGREES = -45
-DIAGONAL_LABEL_POSITION = (0.82, 0.81)
-DIAGONAL_PANEL_SHIFT = 3.9
-DIAGONAL_AXIS_START = np.array([0.02, 0.98])
-DIAGONAL_AXIS_END = np.array([0.98, 0.02])
+# --- Figure layout -----------------------------------------------------------
+FIGURE_SIZE = (10, 10)
+GRID_SPACING = 0.08
 MARGINAL_SIZE_FRACTION = 0.5
+DIAGONAL_PANEL_SHIFT = 3.9
 
+# --- Data colors / markers ---------------------------------------------------
+SCATTER_MARKER_STYLE = {"s": 16, "alpha": 0.55, "edgecolors": "none"}
+HIST_ALPHA = 0.75
+HIST_X_COLOR = "tab:blue"
+HIST_Y_COLOR = "tab:orange"
+DIAGONAL_HIST_COLOR = "tab:green"
+
+# --- Shared line styles ------------------------------------------------------
 REFERENCE_LINE_STYLE = {
     "color": "0.25",
     "linestyle": "--",
@@ -36,22 +43,42 @@ SCATTER_GRID_STYLE = {
     "linewidth": 0.8,
 }
 
+# --- Diagonal (ratio) panel geometry -----------------------------------------
+# The diagonal axis runs from the upper-left to the lower-right of the panel.
+# Bars and labels are offset along the perpendicular "normal" toward the
+# upper-right corner, which is the direction the distribution grows.
+DIAGONAL_AXIS_START = np.array([0.02, 0.98])
+DIAGONAL_AXIS_END = np.array([0.98, 0.02])
+DIAGONAL_DIRECTION = np.array([1.0, -1.0]) / math.sqrt(2)
+DIAGONAL_NORMAL = np.array([1.0, 1.0]) / math.sqrt(2)
+
+DIAGONAL_ROTATION_DEGREES = -45
+DIAGONAL_LABEL_POSITION = (0.82, 0.81)
+DIAGONAL_AXIS_LINE_STYLE = {"color": "0.35", "linewidth": 1.0}
+DIAGONAL_TICK_STYLE = {"color": "0.25", "linewidth": 0.8}
+
+# Offsets are expressed in axes-fraction units along DIAGONAL_NORMAL.
+REFERENCE_LINE_BACK = 0.08
+REFERENCE_LINE_FORWARD = 0.38
+TICK_HALF_LENGTH = 0.025
+LABEL_OFFSET = 0.085
+BAR_WIDTH_FRACTION = 0.95
+BAR_MAX_HEIGHT = 0.26
+
+MAX_REFERENCE_LINES = 7
+
 
 def _reference_offsets(log_x: np.ndarray, log_y: np.ndarray) -> list[float]:
-    """Choose one-decade reference offsets that cover the data."""
+    """Choose one-decade reference offsets (log10(y / x)) that cover the data."""
     offsets = log_y - log_x
     low = math.floor(offsets.min())
     high = math.ceil(offsets.max())
     refs = list(range(low, high + 1))
 
-    if 0 not in refs:
-        refs.append(0)
+    if len(refs) > MAX_REFERENCE_LINES:
+        refs = [round(float(value)) for value in np.linspace(low, high, MAX_REFERENCE_LINES)]
 
-    if len(refs) > 7:
-        refs = [round(float(value)) for value in np.linspace(low, high, 7)]
-        if 0 not in refs:
-            refs.append(0)
-
+    refs.append(0)
     return sorted(set(float(ref) for ref in refs))
 
 
@@ -68,9 +95,7 @@ def _shared_log_limits(log_x: np.ndarray, log_y: np.ndarray) -> tuple[float, flo
 def _reference_label(offset: float) -> str:
     if offset == 0:
         return "y = x"
-
-    multiplier = f"{10**offset:g}"
-    return f"y = {multiplier}x"
+    return f"y = {10**offset:g}x"
 
 
 def _hide_spines(ax: plt.Axes, spines: tuple[str, ...]) -> None:
@@ -78,10 +103,20 @@ def _hide_spines(ax: plt.Axes, spines: tuple[str, ...]) -> None:
         ax.spines[spine].set_visible(False)
 
 
-def _plot_scatter_reference_lines(
-    ax: plt.Axes,
-    reference_offsets: list[float],
-) -> None:
+@dataclass(frozen=True)
+class _DiagonalProjection:
+    """Maps a log10(x / y) value onto a point along the diagonal panel axis."""
+
+    axis_min: float
+    axis_max: float
+
+    def point(self, value: float) -> np.ndarray:
+        fraction = (value - self.axis_min) / (self.axis_max - self.axis_min)
+        return DIAGONAL_AXIS_START + fraction * (DIAGONAL_AXIS_END - DIAGONAL_AXIS_START)
+
+
+def _plot_scatter_reference_lines(ax: plt.Axes, reference_offsets: list[float]) -> None:
+    """Draw constant-ratio (y = c * x) guide lines on the scatter panel."""
     x_min, x_max = ax.get_xlim()
     y_min, y_max = ax.get_ylim()
 
@@ -104,60 +139,23 @@ def _plot_scatter_reference_lines(
     ax.set_ylim(y_min, y_max)
 
 
-def _plot_diagonal_histogram(
+def _draw_diagonal_reference_lines(
     ax: plt.Axes,
-    values: np.ndarray,
-    *,
-    bins: int,
-    color: str,
+    projection: _DiagonalProjection,
     reference_offsets: list[float],
-    log_axis_min: float,
-    log_axis_max: float,
 ) -> None:
-    """Draw a compact histogram along the projection axis for log10(x / y)."""
-    log_axis_span = log_axis_max - log_axis_min
-    axis_min = -log_axis_span
-    axis_max = log_axis_span
-
-    counts, edges = np.histogram(values, bins=bins, range=(axis_min, axis_max))
-    max_count = counts.max(initial=0)
-
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1)
-    ax.set_aspect("equal")
-    ax.axis("off")
-
-    if max_count == 0:
-        return
-
-    diagonal = np.array([1 / math.sqrt(2), -1 / math.sqrt(2)])
-    normal = np.array([1 / math.sqrt(2), 1 / math.sqrt(2)])
-    start = DIAGONAL_AXIS_START
-    end = DIAGONAL_AXIS_END
-    span = end - start
-    bar_width = 0.95 / bins
-
-    def point_for_value(value: float) -> np.ndarray:
-        t = (value - axis_min) / (axis_max - axis_min)
-        return start + t * span
-
+    """Draw the dashed guide lines, ticks, and y = c * x labels for each offset."""
     for offset in reference_offsets:
-        point = point_for_value(-offset)
-        ax.plot(
-            [point[0] - normal[0] * 0.08, point[0] + normal[0] * 0.38],
-            [point[1] - normal[1] * 0.08, point[1] + normal[1] * 0.38],
-            **REFERENCE_LINE_STYLE,
-            clip_on=True,
-        )
-        tick_start = point - normal * 0.025
-        tick_end = point + normal * 0.025
-        ax.plot(
-            [tick_start[0], tick_end[0]],
-            [tick_start[1], tick_end[1]],
-            color="0.25",
-            linewidth=0.8,
-        )
-        label_point = point - normal * 0.085
+        point = projection.point(-offset)
+        back = point - DIAGONAL_NORMAL * REFERENCE_LINE_BACK
+        forward = point + DIAGONAL_NORMAL * REFERENCE_LINE_FORWARD
+        ax.plot([back[0], forward[0]], [back[1], forward[1]], **REFERENCE_LINE_STYLE, clip_on=True)
+
+        tick_start = point - DIAGONAL_NORMAL * TICK_HALF_LENGTH
+        tick_end = point + DIAGONAL_NORMAL * TICK_HALF_LENGTH
+        ax.plot([tick_start[0], tick_end[0]], [tick_start[1], tick_end[1]], **DIAGONAL_TICK_STYLE)
+
+        label_point = point - DIAGONAL_NORMAL * LABEL_OFFSET
         ax.text(
             label_point[0],
             label_point[1],
@@ -168,30 +166,51 @@ def _plot_diagonal_histogram(
             fontsize=8,
         )
 
-    for idx, count in enumerate(counts):
-        center = point_for_value((edges[idx] + edges[idx + 1]) / 2)
-        half_width = 0.5 * bar_width * diagonal
-        height = 0.26 * (count / max_count) * normal
 
-        polygon = Polygon(
-            [
-                center - half_width,
-                center + half_width,
-                center + half_width + height,
-                center - half_width + height,
-            ],
-            closed=True,
-            facecolor=color,
-            edgecolor="white",
-            linewidth=0.4,
-            alpha=0.75,
+def _draw_diagonal_bars(
+    ax: plt.Axes,
+    projection: _DiagonalProjection,
+    counts: np.ndarray,
+    edges: np.ndarray,
+    color: str,
+) -> None:
+    """Draw histogram bars rising perpendicular to the diagonal axis."""
+    max_count = counts.max(initial=0)
+    if max_count == 0:
+        return
+
+    half_width = 0.5 * (BAR_WIDTH_FRACTION / len(counts)) * DIAGONAL_DIRECTION
+
+    for count, low_edge, high_edge in zip(counts, edges[:-1], edges[1:]):
+        center = projection.point((low_edge + high_edge) / 2)
+        height = BAR_MAX_HEIGHT * (count / max_count) * DIAGONAL_NORMAL
+
+        ax.add_patch(
+            Polygon(
+                [
+                    center - half_width,
+                    center + half_width,
+                    center + half_width + height,
+                    center - half_width + height,
+                ],
+                closed=True,
+                facecolor=color,
+                edgecolor="white",
+                linewidth=0.4,
+                alpha=HIST_ALPHA,
+            )
         )
-        ax.add_patch(polygon)
 
-    ax.plot([start[0], end[0]], [start[1], end[1]], color="0.35", linewidth=1.0)
+
+def _draw_diagonal_axis_and_label(ax: plt.Axes) -> None:
+    """Draw the diagonal axis line and its rotated log10(x/y) title."""
+    ax.plot(
+        [DIAGONAL_AXIS_START[0], DIAGONAL_AXIS_END[0]],
+        [DIAGONAL_AXIS_START[1], DIAGONAL_AXIS_END[1]],
+        **DIAGONAL_AXIS_LINE_STYLE,
+    )
     ax.text(
-        DIAGONAL_LABEL_POSITION[0],
-        DIAGONAL_LABEL_POSITION[1],
+        *DIAGONAL_LABEL_POSITION,
         "log10(x/y)",
         transform=ax.transAxes,
         ha="center",
@@ -199,6 +218,34 @@ def _plot_diagonal_histogram(
         rotation=DIAGONAL_ROTATION_DEGREES,
         fontsize=10,
     )
+
+
+def _plot_diagonal_histogram(
+    ax: plt.Axes,
+    values: np.ndarray,
+    *,
+    bins: int,
+    color: str,
+    reference_offsets: list[float],
+    log_axis_min: float,
+    log_axis_max: float,
+) -> None:
+    """Draw the log10(x / y) distribution along the panel's diagonal axis."""
+    log_axis_span = log_axis_max - log_axis_min
+    projection = _DiagonalProjection(axis_min=-log_axis_span, axis_max=log_axis_span)
+    counts, edges = np.histogram(values, bins=bins, range=(projection.axis_min, projection.axis_max))
+
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+    if counts.max(initial=0) == 0:
+        return
+
+    _draw_diagonal_reference_lines(ax, projection, reference_offsets)
+    _draw_diagonal_bars(ax, projection, counts, edges, color)
+    _draw_diagonal_axis_and_label(ax)
 
 
 def _align_marginal_axes(
@@ -299,15 +346,16 @@ def plot_log_scatter_with_distributions(
     log_y = np.log10(y)
     reference_offsets = _reference_offsets(log_x, log_y)
     axis_min, axis_max = _shared_log_limits(log_x, log_y)
+    shared_bins = np.geomspace(axis_min, axis_max, bins + 1)
 
-    fig = plt.figure(figsize=(10, 10))
+    fig = plt.figure(figsize=FIGURE_SIZE)
     grid = fig.add_gridspec(
         2,
         2,
         width_ratios=(1, 1),
         height_ratios=(1, 1),
-        hspace=0.08,
-        wspace=0.08,
+        hspace=GRID_SPACING,
+        wspace=GRID_SPACING,
     )
 
     ax_hist_x = fig.add_subplot(grid[0, 0])
@@ -318,23 +366,21 @@ def plot_log_scatter_with_distributions(
     ax_scatter.set_box_aspect(1)
     ax_ratio.set_box_aspect(1)
 
-    ax_scatter.scatter(x, y, s=16, alpha=0.55, edgecolors="none")
+    ax_scatter.scatter(x, y, **SCATTER_MARKER_STYLE)
     _style_scatter_axis(ax_scatter, axis_min, axis_max)
     _plot_scatter_reference_lines(ax_scatter, reference_offsets)
 
-    shared_bins = np.geomspace(axis_min, axis_max, bins + 1)
-
-    ax_hist_x.hist(x, bins=shared_bins, color="tab:blue", alpha=0.75)
+    ax_hist_x.hist(x, bins=shared_bins, color=HIST_X_COLOR, alpha=HIST_ALPHA)
     _style_top_marginal_axis(ax_hist_x, axis_min, axis_max)
 
-    ax_hist_y.hist(y, bins=shared_bins, orientation="horizontal", color="tab:orange", alpha=0.75)
+    ax_hist_y.hist(y, bins=shared_bins, orientation="horizontal", color=HIST_Y_COLOR, alpha=HIST_ALPHA)
     _style_right_marginal_axis(ax_hist_y, axis_min, axis_max)
 
     _plot_diagonal_histogram(
         ax_ratio,
         np.log10(x / y),
         bins=bins,
-        color="tab:green",
+        color=DIAGONAL_HIST_COLOR,
         reference_offsets=reference_offsets,
         log_axis_min=np.log10(axis_min),
         log_axis_max=np.log10(axis_max),
