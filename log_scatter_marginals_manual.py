@@ -15,7 +15,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.transforms import Affine2D
+from matplotlib.patches import Polygon
 
 # --- Figure layout -----------------------------------------------------------
 FIGURE_TITLE = "Log-Scale Scatter Plot with Marginal Distributions"
@@ -117,25 +117,6 @@ class _DiagonalProjection:
     def point(self, value: float) -> np.ndarray:
         fraction = (value - self.axis_min) / (self.axis_max - self.axis_min)
         return DIAGONAL_AXIS_START + fraction * (DIAGONAL_AXIS_END - DIAGONAL_AXIS_START)
-
-    def transform(self, ax: plt.Axes) -> Affine2D:
-        """Map local ratio/count coordinates into diagonal-panel axes coordinates."""
-        axis_range = self.axis_max - self.axis_min
-        span = DIAGONAL_AXIS_END - DIAGONAL_AXIS_START
-        diagonal_scale = span / axis_range
-        origin = DIAGONAL_AXIS_START - self.axis_min * diagonal_scale
-
-        return (
-            Affine2D.from_values(
-                diagonal_scale[0],
-                diagonal_scale[1],
-                DIAGONAL_NORMAL[0],
-                DIAGONAL_NORMAL[1],
-                origin[0],
-                origin[1],
-            )
-            + ax.transAxes
-        )
 
 
 @dataclass(frozen=True)
@@ -253,33 +234,39 @@ def _draw_diagonal_reference_lines(
         )
 
 
-def _draw_ratio_histogram_bars(
+def _draw_diagonal_bars(
     ax: plt.Axes,
     projection: _DiagonalProjection,
     counts: np.ndarray,
     edges: np.ndarray,
     color: str,
 ) -> None:
-    """Draw the ratio histogram with Matplotlib bars transformed onto the diagonal."""
+    """Draw histogram bars rising perpendicular to the diagonal axis."""
     max_count = counts.max(initial=0)
     if max_count == 0:
         return
 
-    centers = (edges[:-1] + edges[1:]) / 2
-    widths = np.diff(edges) * BAR_WIDTH_FRACTION
-    heights = BAR_MAX_HEIGHT * (counts / max_count)
+    half_width = 0.5 * (BAR_WIDTH_FRACTION / len(counts)) * DIAGONAL_DIRECTION
 
-    ax.bar(
-        centers,
-        heights,
-        width=widths,
-        align="center",
-        color=color,
-        edgecolor="white",
-        linewidth=0.4,
-        alpha=HIST_ALPHA,
-        transform=projection.transform(ax),
-    )
+    for count, low_edge, high_edge in zip(counts, edges[:-1], edges[1:]):
+        center = projection.point((low_edge + high_edge) / 2)
+        height = BAR_MAX_HEIGHT * (count / max_count) * DIAGONAL_NORMAL
+
+        ax.add_patch(
+            Polygon(
+                [
+                    center - half_width,
+                    center + half_width,
+                    center + half_width + height,
+                    center - half_width + height,
+                ],
+                closed=True,
+                facecolor=color,
+                edgecolor="white",
+                linewidth=0.4,
+                alpha=HIST_ALPHA,
+            )
+        )
 
 
 def _draw_diagonal_axis_and_label(ax: plt.Axes, *, color: str) -> None:
@@ -301,7 +288,7 @@ def _draw_diagonal_axis_and_label(ax: plt.Axes, *, color: str) -> None:
     )
 
 
-def _plot_ratio_projection_panel(
+def _plot_diagonal_histogram(
     ax: plt.Axes,
     values: np.ndarray,
     *,
@@ -325,7 +312,7 @@ def _plot_ratio_projection_panel(
         return
 
     _draw_diagonal_reference_lines(ax, projection, reference_offsets, color=colors.reference)
-    _draw_ratio_histogram_bars(ax, projection, counts, edges, colors.diagonal_hist)
+    _draw_diagonal_bars(ax, projection, counts, edges, colors.diagonal_hist)
     _draw_diagonal_axis_and_label(ax, color=colors.diagonal_axis)
 
 
@@ -542,7 +529,7 @@ def plot_log_scatter_with_distributions(
     )
     _plot_top_marginal(axes.hist_x, data.x, data.shared_bins, colors=colors)
     _plot_right_marginal(axes.hist_y, data.y, data.shared_bins, colors=colors)
-    _plot_ratio_projection_panel(
+    _plot_diagonal_histogram(
         axes.ratio,
         data.ratio,
         bins=bins,
